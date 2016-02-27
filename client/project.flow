@@ -1,0 +1,43 @@
+{
+
+  luxe:{
+    window: {
+      width:960,
+      height:640,
+      title:'luxe empty project',
+      fullscreen:false,
+      resizable:true,
+      borderless:false
+    }
+  },
+
+  project : {
+    name : 'empty',
+    version : '1.0.0',
+    author : 'luxeengine',
+
+    app : {
+      name : 'luxe_empty',
+      package : 'com.luxeengine.empty',
+      web:{
+        libs:{
+          "jquery":"https://ajax.googleapis.com/ajax/libs/jquery/1.12.0/jquery.min.js",
+          "pusher-js":'//js.pusher.com/3.0/pusher.min.js'
+        }
+      }
+    },
+
+    build : {
+      dependencies : {
+        luxe : '*',
+        jQueryExtern: '*',
+      }
+    },
+
+    // files : {
+    //   assets : 'assets/'
+    // }
+
+  }
+
+}
