@@ -1,0 +1,5 @@
+-lib hxnodejs
+-cp src
+Game.hx
+-js game.js
+-D -js-es5

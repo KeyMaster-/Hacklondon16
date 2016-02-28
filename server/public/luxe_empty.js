@@ -463,7 +463,7 @@ luxe_Game.prototype = $extend(luxe_Emitter.prototype,{
 	,__class__: luxe_Game
 });
 var Main = function() {
-	this.socketId = "";
+	this.socket_id = "";
 	luxe_Game.call(this);
 };
 $hxClasses["Main"] = Main;
@@ -474,37 +474,48 @@ Main.prototype = $extend(luxe_Game.prototype,{
 		return config;
 	}
 	,ready: function() {
-		var _g1 = this;
-		this.geom = Luxe.draw.box({ x : Luxe.core.screen.get_mid().x, y : Luxe.core.screen.get_mid().y, w : 64, h : 64});
+		var _g = this;
+		this.players = new haxe_ds_StringMap();
 		this.pusher = new Pusher("6c115190175e44fca398");
-		this.channel = this.pusher.subscribe("hacklondon16");
-		this.channel.bind("turn_result",function(data) {
-			var _g = data.move_dir;
-			switch(_g) {
-			case "0":
-				var _g2 = _g1.geom.transform.local.pos;
-				_g2.set_x(_g2.x - 64);
-				break;
-			case "1":
-				var _g21 = _g1.geom.transform.local.pos;
-				_g21.set_y(_g21.y - 64);
-				break;
-			case "2":
-				var _g22 = _g1.geom.transform.local.pos;
-				_g22.set_x(_g22.x + 64);
-				break;
-			case "3":
-				var _g23 = _g1.geom.transform.local.pos;
-				_g23.set_y(_g23.y + 64);
-				break;
-			}
-		});
+		this.channel = this.pusher.subscribe("presence-hacklondon16");
+		this.channel.bind("turn_result",$bind(this,this.turn_result));
+		this.channel.bind("player_removed",$bind(this,this.player_removed));
 		this.pusher.connection.bind("connected",function(_) {
-			_g1.socketId = _g1.pusher.connection.socket_id;
-			_g1.send_ajax(0,{ });
+			_g.socket_id = _g.pusher.connection.socket_id;
 		});
 	}
-	,player_joined: function() {
+	,turn_result: function(data) {
+		var data_array;
+		data_array = js_Boot.__cast(data.players , Array);
+		var _g = 0;
+		while(_g < data_array.length) {
+			var player_data = data_array[_g];
+			++_g;
+			if(!(function($this) {
+				var $r;
+				var key = player_data.id;
+				$r = $this.players.exists(key);
+				return $r;
+			}(this))) {
+				var key1 = player_data.id;
+				var value = this.create_player();
+				this.players.set(key1,value);
+			}
+			var player;
+			var key2 = player_data.id;
+			player = this.players.get(key2);
+			player.transform.local.pos.set_x(Std["int"](player_data.x) * 64);
+			player.transform.local.pos.set_y(Std["int"](player_data.y) * 64);
+		}
+	}
+	,player_removed: function(data) {
+		var player = this.players.get(data.id);
+		player.drop();
+		this.players.remove(data.id);
+		haxe_Log.trace("Player removed: " + data.id,{ fileName : "Main.hx", lineNumber : 59, className : "Main", methodName : "player_removed"});
+	}
+	,create_player: function() {
+		return Luxe.draw.box({ x : 0, y : 0, w : 64, h : 64});
 	}
 	,onkeydown: function(e) {
 		var move_dir = -1;
@@ -526,8 +537,7 @@ Main.prototype = $extend(luxe_Game.prototype,{
 		if(move_dir != -1) this.send_ajax(2,{ move_dir : move_dir});
 	}
 	,send_ajax: function(id,data) {
-		haxe_Log.trace("sending " + id,{ fileName : "Main.hx", lineNumber : 76, className : "Main", methodName : "send_ajax"});
-		data.socket_id = this.socketId;
+		data.socket_id = this.socket_id;
 		data.event_id = id;
 		$.ajax({ url : "/client_message", type : "post", data : data});
 	}
@@ -18696,7 +18706,7 @@ var snow_Snow = function(_host) {
 	this.immediate_shutdown = false;
 	this.has_shutdown = false;
 	this.shutting_down = false;
-	this.debug = true;
+	this.debug = false;
 	this.platform = "unknown";
 	this.ready = false;
 	this.freeze = false;
@@ -18976,7 +18986,7 @@ var snow_api_Emitter = function() {
 $hxClasses["snow.api.Emitter"] = snow_api_Emitter;
 snow_api_Emitter.__name__ = ["snow","api","Emitter"];
 snow_api_Emitter.prototype = {
-	emit: function(event,data,pos) {
+	emit: function(event,data) {
 		this._check();
 		var list = this.bindings.h[event];
 		if(list != null && list.length > 0) {
@@ -18989,20 +18999,20 @@ snow_api_Emitter.prototype = {
 		}
 		this._check();
 	}
-	,on: function(event,handler,pos) {
+	,on: function(event,handler) {
 		this._check();
 		if(!this.bindings.h.hasOwnProperty(event)) {
 			this.bindings.h[event] = [handler];
-			this.connected.push({ handler : handler, event : event, pos : pos});
+			this.connected.push({ handler : handler, event : event});
 		} else {
 			var list = this.bindings.h[event];
 			if(HxOverrides.indexOf(list,handler,0) == -1) {
 				list.push(handler);
-				this.connected.push({ handler : handler, event : event, pos : pos});
+				this.connected.push({ handler : handler, event : event});
 			}
 		}
 	}
-	,off: function(event,handler,pos) {
+	,off: function(event,handler) {
 		this._check();
 		var success = false;
 		if(this.bindings.h.hasOwnProperty(event)) {
@@ -19065,12 +19075,6 @@ var snow_api_Promise = function(func) {
 $hxClasses["snow.api.Promise"] = snow_api_Promise;
 snow_api_Promise.__name__ = ["snow","api","Promise"];
 snow_api_Promise.all = function(list) {
-	var _g = 0;
-	while(_g < list.length) {
-		var item = list[_g];
-		++_g;
-		if(item == null) throw new js__$Boot_HaxeError("Promise.all handed an array with null items within it");
-	}
 	return new snow_api_Promise(function(ok,no) {
 		var current = 0;
 		var total = list.length;
@@ -19093,10 +19097,10 @@ snow_api_Promise.all = function(list) {
 			no(reject_result);
 		};
 		var index1 = 0;
-		var _g1 = 0;
-		while(_g1 < list.length) {
-			var promise = list[_g1];
-			++_g1;
+		var _g = 0;
+		while(_g < list.length) {
+			var promise = list[_g];
+			++_g;
 			promise.then((function(f,a1) {
 				return function(a2) {
 					f(a1,a2);
@@ -21503,16 +21507,16 @@ $hxClasses["snow.systems.audio.Audio"] = snow_systems_audio_Audio;
 snow_systems_audio_Audio.__name__ = ["snow","systems","audio","Audio"];
 snow_systems_audio_Audio.prototype = {
 	off_Int: function(_event,_handler) {
-		return this.emitter.off(_event,_handler,{ fileName : "Audio.hx", lineNumber : 45, className : "snow.systems.audio.Audio", methodName : "off"});
+		return this.emitter.off(_event,_handler);
 	}
 	,on_Int: function(_event,_handler) {
-		this.emitter.on(_event,_handler,{ fileName : "Audio.hx", lineNumber : 38, className : "snow.systems.audio.Audio", methodName : "on"});
+		this.emitter.on(_event,_handler);
 	}
 	,emit_Int: function(_event,_data) {
-		this.emitter.emit(_event,_data,{ fileName : "Audio.hx", lineNumber : 52, className : "snow.systems.audio.Audio", methodName : "emit"});
+		this.emitter.emit(_event,_data);
 	}
 	,emit_snow_systems_audio_AudioSource: function(_event,_data) {
-		this.emitter.emit(_event,_data,{ fileName : "Audio.hx", lineNumber : 52, className : "snow.systems.audio.Audio", methodName : "emit"});
+		this.emitter.emit(_event,_data);
 	}
 	,play: function(_source,_volume,_paused) {
 		if(_paused == null) _paused = false;
@@ -24188,5 +24192,3 @@ snow_types__$Types_InputEventType_$Impl_$.ie_gamepad = 5;
 snow_types__$Types_InputEventType_$Impl_$.ie_joystick = 6;
 LuxeApp.main();
 })(typeof console != "undefined" ? console : {log:function(){}}, typeof window != "undefined" ? window : typeof global != "undefined" ? global : typeof self != "undefined" ? self : this);
-
-//# sourceMappingURL=luxe_empty.js.map

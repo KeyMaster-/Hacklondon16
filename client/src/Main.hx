@@ -5,12 +5,14 @@ import pusher.channels.Channel;
 import jQuery.JQueryStatic;
 import phoenix.geometry.Geometry;
 
+typedef Player = Geometry;
+
 class Main extends luxe.Game {
     var pusher:Pusher;
     var channel:Channel;
-    var socketId:String = '';
+    var socket_id:String = '';
 
-    var geom:Geometry;
+    var players:Map<String, Player>;
 
     override function config(config:luxe.AppConfig) {
 
@@ -19,37 +21,44 @@ class Main extends luxe.Game {
     } //config
 
     override function ready() {
-        geom = Luxe.draw.box({
-            x:Luxe.screen.mid.x,
-            y:Luxe.screen.mid.y,
-            w:64,
-            h:64
-        });
+        players = new Map();
 
         pusher = new Pusher('6c115190175e44fca398');
-        channel = pusher.subscribe('hacklondon16');
-        channel.bind('turn_result', function(data) {
-            switch(data.move_dir) {
-                case '0':
-                    geom.transform.pos.x -= 64;
-                case '1':
-                    geom.transform.pos.y -= 64;
-                case '2':
-                    geom.transform.pos.x += 64;
-                case '3':
-                    geom.transform.pos.y += 64;
-            }
-        });
+        channel = pusher.subscribe('presence-hacklondon16');
+        channel.bind('game_state', game_state);
+        channel.bind('player_removed', player_removed);
 
         pusher.connection.bind('connected', function(_) {
-            socketId = pusher.connection.socket_id;
-            send_ajax(MessageId.joined, { });
+            socket_id = pusher.connection.socket_id;
         });
     } //ready
 
-        //callback stub for a player joining, create new player object here
-    function player_joined() {
+    function game_state(data) {
+        var data_array = cast(data.players, Array<Dynamic>);
+        for(player_data in data_array) {
+            if(!players.exists(player_data.id)) {
+                players.set(player_data.id, create_player());
+            }
+            var player = players.get(player_data.id);
+            player.transform.pos.x = Std.int(player_data.x) * 64;
+            player.transform.pos.y = Std.int(player_data.y) * 64;
+        }
+    }
 
+    function player_removed(data) {
+        var player = players.get(data.id);
+        player.drop();
+        players.remove(data.id);
+        trace('Player removed: ' + data.id);
+    }
+
+    function create_player():Player {
+        return Luxe.draw.box({
+            x:0,
+            y:0,
+            w:64,
+            h:64
+        });
     }
 
     override function onkeydown(e:KeyEvent) {
@@ -73,8 +82,7 @@ class Main extends luxe.Game {
     }
 
     function send_ajax(id:MessageId, data:Dynamic) {
-        trace('sending $id');
-        data.socket_id = socketId;
+        data.socket_id = socket_id;
         data.event_id = id;
         JQueryStatic.ajax({
             url: '/client_message',
@@ -89,12 +97,6 @@ class Main extends luxe.Game {
         }
 
     } //onkeyup
-
-    override function update(dt:Float) {
-
-    } //update
-
-
 } //Main
 
 @:enum
@@ -102,4 +104,15 @@ abstract MessageId(Int) from Int to Int {
     var joined = 0;
     var left = 1;
     var moved = 2;
+}
+
+
+typedef State = {
+    players:Array<PlayerInfo>
+}
+
+typedef PlayerInfo = {
+    id:String,
+    x:Int,
+    y:Int
 }
