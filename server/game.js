@@ -7,20 +7,25 @@ function $extend(from, fields) {
 	return proto;
 }
 var Game = $hx_exports.Game = function() {
+	this.submitted_turn_count = 0;
+	this.player_count = 0;
 	this.players = new haxe_ds_StringMap();
+	this.delayed_players = [];
 };
 Game.__name__ = true;
 Game.prototype = {
 	add_player: function(socket_id) {
-		var value = new Player(0,0);
-		this.players.set(socket_id,value);
-		console.log("INFO: Added player " + socket_id);
+		this.delayed_players.push(socket_id);
+		console.log("INFO: Delaying player adding: " + socket_id);
 	}
 	,remove_player: function(socket_id) {
-		this.players.remove(socket_id);
-		console.log("INFO: Removed player " + socket_id);
+		if(this.players.exists(socket_id)) {
+			this.players.remove(socket_id);
+			this.player_count--;
+		}
+		console.log("INFO: Removed player " + socket_id + ", new count: " + this.player_count);
 	}
-	,move_player: function(socket_id,dir) {
+	,submit_turn: function(socket_id,dir) {
 		var player = this.players.get(socket_id);
 		switch(dir) {
 		case 0:
@@ -36,6 +41,8 @@ Game.prototype = {
 			player.y++;
 			break;
 		}
+		this.submitted_turn_count++;
+		console.log("INFO: " + socket_id + " submitted turn, new submitted count: " + this.submitted_turn_count);
 	}
 	,get_state: function() {
 		var info = { players : []};
@@ -46,6 +53,20 @@ Game.prototype = {
 			info.players.push({ id : key, x : player.x, y : player.y});
 		}
 		return info;
+	}
+	,next_turn: function() {
+		this.submitted_turn_count = 0;
+		while(this.delayed_players.length > 0) {
+			var id = this.delayed_players.shift();
+			var value = new Player(0,0);
+			this.players.set(id,value);
+			this.player_count++;
+			console.log("INFO: Added player " + id + ", new count: " + this.player_count);
+		}
+	}
+	,turn_complete: function() {
+		console.log("Checking turn complete, submitted:" + this.submitted_turn_count + ", players:" + this.player_count);
+		return this.submitted_turn_count == this.player_count;
 	}
 	,__class__: Game
 };
@@ -97,12 +118,20 @@ haxe_ds_StringMap.prototype = {
 		if(__map_reserved[key] != null) return this.getReserved(key);
 		return this.h[key];
 	}
+	,exists: function(key) {
+		if(__map_reserved[key] != null) return this.existsReserved(key);
+		return this.h.hasOwnProperty(key);
+	}
 	,setReserved: function(key,value) {
 		if(this.rh == null) this.rh = { };
 		this.rh["$" + key] = value;
 	}
 	,getReserved: function(key) {
 		if(this.rh == null) return null; else return this.rh["$" + key];
+	}
+	,existsReserved: function(key) {
+		if(this.rh == null) return false;
+		return this.rh.hasOwnProperty("$" + key);
 	}
 	,remove: function(key) {
 		if(__map_reserved[key] != null) {

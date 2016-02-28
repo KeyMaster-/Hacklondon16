@@ -463,6 +463,7 @@ luxe_Game.prototype = $extend(luxe_Emitter.prototype,{
 	,__class__: luxe_Game
 });
 var Main = function() {
+	this.waiting_for_turn = false;
 	this.socket_id = "";
 	luxe_Game.call(this);
 };
@@ -478,13 +479,14 @@ Main.prototype = $extend(luxe_Game.prototype,{
 		this.players = new haxe_ds_StringMap();
 		this.pusher = new Pusher("6c115190175e44fca398");
 		this.channel = this.pusher.subscribe("presence-hacklondon16");
-		this.channel.bind("turn_result",$bind(this,this.turn_result));
+		this.channel.bind("game_state",$bind(this,this.game_state));
 		this.channel.bind("player_removed",$bind(this,this.player_removed));
+		this.channel.bind("next_turn",$bind(this,this.next_turn));
 		this.pusher.connection.bind("connected",function(_) {
 			_g.socket_id = _g.pusher.connection.socket_id;
 		});
 	}
-	,turn_result: function(data) {
+	,game_state: function(data) {
 		var data_array;
 		data_array = js_Boot.__cast(data.players , Array);
 		var _g = 0;
@@ -509,10 +511,16 @@ Main.prototype = $extend(luxe_Game.prototype,{
 		}
 	}
 	,player_removed: function(data) {
-		var player = this.players.get(data.id);
-		player.drop();
-		this.players.remove(data.id);
-		haxe_Log.trace("Player removed: " + data.id,{ fileName : "Main.hx", lineNumber : 59, className : "Main", methodName : "player_removed"});
+		if(this.players.exists(data.id)) {
+			var player = this.players.get(data.id);
+			player.drop();
+			this.players.remove(data.id);
+			haxe_Log.trace("Player removed: " + data.id,{ fileName : "Main.hx", lineNumber : 56, className : "Main", methodName : "player_removed"});
+		} else haxe_Log.trace("Player removed didn't exist in this game",{ fileName : "Main.hx", lineNumber : 59, className : "Main", methodName : "player_removed"});
+	}
+	,next_turn: function(_) {
+		haxe_Log.trace("new turn",{ fileName : "Main.hx", lineNumber : 65, className : "Main", methodName : "next_turn"});
+		this.waiting_for_turn = false;
 	}
 	,create_player: function() {
 		return Luxe.draw.box({ x : 0, y : 0, w : 64, h : 64});
@@ -534,7 +542,11 @@ Main.prototype = $extend(luxe_Game.prototype,{
 			move_dir = 3;
 			break;
 		}
-		if(move_dir != -1) this.send_ajax(2,{ move_dir : move_dir});
+		if(move_dir != -1 && !this.waiting_for_turn) {
+			haxe_Log.trace("sending move",{ fileName : "Main.hx", lineNumber : 92, className : "Main", methodName : "onkeydown"});
+			this.send_ajax(0,{ move_dir : move_dir});
+			this.waiting_for_turn = true;
+		}
 	}
 	,send_ajax: function(id,data) {
 		data.socket_id = this.socket_id;
@@ -543,8 +555,6 @@ Main.prototype = $extend(luxe_Game.prototype,{
 	}
 	,onkeyup: function(e) {
 		if(e.keycode == 27) Luxe.core.shutdown();
-	}
-	,update: function(dt) {
 	}
 	,__class__: Main
 });
