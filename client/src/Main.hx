@@ -4,11 +4,13 @@ import pusher.Pusher;
 import pusher.channels.Channel;
 import jQuery.JQueryStatic;
 import phoenix.geometry.Geometry;
+import phoenix.geometry.Vertex;
 import luxe.Entity;
 import luxe.Mesh;
 import luxe.Vector;
-
-typedef Player = Geometry;
+import entities.Player;
+import phoenix.Batcher;
+import luxe.Color;
 
 class Main extends luxe.Game {
     var pusher:Pusher;
@@ -18,24 +20,13 @@ class Main extends luxe.Game {
     var players:Map<String, Player>;
 
     var waiting_for_turn:Bool = true;
-        ////
-    var map:Entity;
-    var geom:Geometry;
 
-    var mesh : Mesh;
     var ship : Mesh;
 
-    var map_x: Array<Float>;
-    var map_z: Array<Float>;
-
-    var screen_mouse : Vector;
-    var view_mouse : Vector;
-    var world_mouse : Vector;
-
     override function config(config:luxe.AppConfig) {
-        config.preload.textures.push({ id:'assets/Box002DiffuseMap.jpg' });
+        config.preload.textures.push({ id:'assets/Scrab Diffuse Map.jpg' });
         config.preload.texts.push({ id:'assets/Scrab.obj' });
-
+        config.render.depth = 16;
         return config;
 
     } //config
@@ -48,33 +39,32 @@ class Main extends luxe.Game {
             aspect : Luxe.screen.w/Luxe.screen.h
         });
 
-        connect_input();
+        var vertex_color = new Color(1, 1, 1, 1);
 
         for(x in 0...100) {
-            for(y in 0...50) {
-                var geom = Luxe.draw.ngon({
-                    r:1,
-                    sides:6,
-                    solid:true,
-                    x:(1 + Math.cos(Math.PI / 3)) * x + x * 0.1,
-                    y:(y * 2 + (x % 2)) * Math.sin(Math.PI / 3) + y * 0.1, //A bit of offset
-                    depth:10
+            for(z in 0...50) {
+                var geom = new Geometry({
+                    batcher:Luxe.renderer.batcher,
+                    primitive_type:PrimitiveType.triangle_strip
                 });
-                geom.transform.rotation.setFromEuler(new Vector(Math.PI / 2, 0, 0));
+
+                geom.vertices.push(new Vertex(new Vector(-0.45, 0, -0.45), vertex_color));
+                geom.vertices.push(new Vertex(new Vector(-0.45, 0, 0.45), vertex_color));
+                geom.vertices.push(new Vertex(new Vector(0.45, 0, -0.45), vertex_color));
+                geom.vertices.push(new Vertex(new Vector(0.45, 0, 0.45), vertex_color));
+                
+                geom.transform.pos.x = x;
+                geom.transform.pos.z = z;
                 geom.locked = true;
             }
         }
+
+        connect_input();
 
             //move up and back a bit
         Luxe.camera.pos.set_xyz(0,100,0);
 
         Luxe.camera.rotation.setFromEuler(new Vector(-1.2,0,0));
-
-        var tex2 = Luxe.resources.texture('assets/Box002DiffuseMap.jpg');
-
-        ship = new Mesh({ file:'assets/Scrab.obj', texture:tex2});
-
-        ship.transform.pos.set_xyz(-241.5,21,-121);
 
         players = new Map();
 
@@ -96,15 +86,15 @@ class Main extends luxe.Game {
                 players.set(player_data.id, create_player());
             }
             var player = players.get(player_data.id);
-            player.transform.pos.x = Std.int(player_data.x) * 64;
-            player.transform.pos.y = Std.int(player_data.y) * 64;
+            player.transform.pos.x = player_data.x;
+            player.transform.pos.z = player_data.y;
         }
     }
 
     function player_removed(data) {
         if(players.exists(data.id)) { 
             var player = players.get(data.id);
-            player.drop();
+            player.destroy();
             players.remove(data.id);
             trace('Player removed: ' + data.id);
         }
@@ -120,19 +110,14 @@ class Main extends luxe.Game {
     }
 
     function create_player():Player {
-        return Luxe.draw.box({
-            x:0,
-            y:0,
-            w:64,
-            h:64
-        });
+        var player = new entities.Player(0, 0, 'assets/Scrab.obj', 'assets/Scrab Diffuse Map.jpg');
+        player.transform.pos.set_xyz(0, 1, 0);
+        return player;
     }
 
     override function onkeydown(e:KeyEvent) {
         var move_dir:Int = -1;
         switch(e.keycode) {
-            case Key.key_q:
-                countHex();
             case Key.key_j:
                 move_dir = 0;
             case Key.key_i:
@@ -204,35 +189,11 @@ class Main extends luxe.Game {
 
     }
 
-    function countHex() {
-        map_x = [];
-        map_z = [];
-
-        var init_x = -241.5;
-        var init_z = -121;
-        for(i in 1... 63) {
-            if(!(i%2 ==0)) {
-                for(v in 0...36) {
-                    map_x.push(init_x+13.45*(i+6.5));
-                    map_z.push(init_z+3.88*(i+1));
-                    
-                }
-            } else {
-                for(v in 0...37) {
-                    map_x.push(init_x+13.45*i);
-                    map_z.push(init_z+3.88*(i));
-                    ship.pos.set_xyz(init_x+13.45*i,21,init_z+3.88*i);
-                    trace(i);
-                    trace(v);
-                }
-            }
-        }
-    }
-
     override function onmousedown(e:MouseEvent) {
-        var mouse_ray = Luxe.camera.view.screen_point_to_ray(Luxe.screen.mid);
+        var mouse_ray = Luxe.camera.view.screen_point_to_ray(e.pos);
         var world_pos = Luxe.utils.geometry.intersect_ray_plane(mouse_ray.origin, mouse_ray.dir, new Vector(0, 1, 0), new Vector(0, 0, 0));
-        trace(world_pos);
+        var tile_x = Math.floor(world_pos.x + 0.5);
+        var tile_y = Math.floor(world_pos.z + 0.5);
     }
 
 } //Main

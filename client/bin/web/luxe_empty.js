@@ -463,6 +463,7 @@ luxe_Game.prototype = $extend(luxe_Emitter.prototype,{
 	,__class__: luxe_Game
 });
 var Main = function() {
+	this.waiting_for_turn = true;
 	this.socket_id = "";
 	luxe_Game.call(this);
 };
@@ -471,20 +472,45 @@ Main.__name__ = ["Main"];
 Main.__super__ = luxe_Game;
 Main.prototype = $extend(luxe_Game.prototype,{
 	config: function(config) {
+		config.preload.textures.push({ id : "assets/Scrab Diffuse Map.jpg"});
+		config.preload.texts.push({ id : "assets/Scrab.obj"});
+		config.render.depth = 16;
 		return config;
 	}
 	,ready: function() {
 		var _g = this;
+		Luxe.camera.view.set_perspective({ far : 1000, near : 0.1, fov : 90, aspect : Luxe.core.screen.get_w() / Luxe.core.screen.get_h()});
+		var vertex_color = new phoenix_Color(1,1,1,1);
+		var _g1 = 0;
+		while(_g1 < 100) {
+			var x = _g1++;
+			var _g11 = 0;
+			while(_g11 < 50) {
+				var z = _g11++;
+				var geom = new phoenix_geometry_Geometry({ batcher : Luxe.renderer.batcher, primitive_type : 5});
+				geom.vertices.push(new phoenix_geometry_Vertex(new phoenix_Vector(-0.45,0,-0.45),vertex_color));
+				geom.vertices.push(new phoenix_geometry_Vertex(new phoenix_Vector(-0.45,0,0.45),vertex_color));
+				geom.vertices.push(new phoenix_geometry_Vertex(new phoenix_Vector(0.45,0,-0.45),vertex_color));
+				geom.vertices.push(new phoenix_geometry_Vertex(new phoenix_Vector(0.45,0,0.45),vertex_color));
+				geom.transform.local.pos.set_x(x);
+				geom.transform.local.pos.set_z(z);
+				geom.set_locked(true);
+			}
+		}
+		this.connect_input();
+		Luxe.camera.get_pos().set_xyz(0,100,0);
+		Luxe.camera.get_rotation().setFromEuler(new phoenix_Vector(-1.2,0,0));
 		this.players = new haxe_ds_StringMap();
 		this.pusher = new Pusher("6c115190175e44fca398");
 		this.channel = this.pusher.subscribe("presence-hacklondon16");
-		this.channel.bind("turn_result",$bind(this,this.turn_result));
+		this.channel.bind("game_state",$bind(this,this.game_state));
 		this.channel.bind("player_removed",$bind(this,this.player_removed));
+		this.channel.bind("next_turn",$bind(this,this.next_turn));
 		this.pusher.connection.bind("connected",function(_) {
 			_g.socket_id = _g.pusher.connection.socket_id;
 		});
 	}
-	,turn_result: function(data) {
+	,game_state: function(data) {
 		var data_array;
 		data_array = js_Boot.__cast(data.players , Array);
 		var _g = 0;
@@ -504,37 +530,71 @@ Main.prototype = $extend(luxe_Game.prototype,{
 			var player;
 			var key2 = player_data.id;
 			player = this.players.get(key2);
-			player.transform.local.pos.set_x(Std["int"](player_data.x) * 64);
-			player.transform.local.pos.set_y(Std["int"](player_data.y) * 64);
+			player.get_transform().get_pos().set_x(player_data.x);
+			player.get_transform().get_pos().set_z(player_data.y);
 		}
 	}
 	,player_removed: function(data) {
-		var player = this.players.get(data.id);
-		player.drop();
-		this.players.remove(data.id);
-		haxe_Log.trace("Player removed: " + data.id,{ fileName : "Main.hx", lineNumber : 59, className : "Main", methodName : "player_removed"});
+		if(this.players.exists(data.id)) {
+			var player = this.players.get(data.id);
+			player.destroy();
+			this.players.remove(data.id);
+			haxe_Log.trace("Player removed: " + data.id,{ fileName : "Main.hx", lineNumber : 99, className : "Main", methodName : "player_removed"});
+		} else haxe_Log.trace("Player removed didn't exist in this game",{ fileName : "Main.hx", lineNumber : 102, className : "Main", methodName : "player_removed"});
+	}
+	,next_turn: function(_) {
+		haxe_Log.trace("new turn",{ fileName : "Main.hx", lineNumber : 108, className : "Main", methodName : "next_turn"});
+		this.waiting_for_turn = false;
 	}
 	,create_player: function() {
-		return Luxe.draw.box({ x : 0, y : 0, w : 64, h : 64});
+		var player = new entities_Player(0,0,"assets/Scrab.obj","assets/Scrab Diffuse Map.jpg");
+		player.get_transform().get_pos().set_xyz(0,1,0);
+		return player;
 	}
 	,onkeydown: function(e) {
 		var move_dir = -1;
 		var _g = e.keycode;
 		switch(_g) {
-		case snow_systems_input_Keycodes.from_scan(snow_systems_input_Scancodes.left):
+		case 106:
 			move_dir = 0;
 			break;
-		case snow_systems_input_Keycodes.from_scan(snow_systems_input_Scancodes.up):
+		case 105:
 			move_dir = 1;
 			break;
-		case snow_systems_input_Keycodes.from_scan(snow_systems_input_Scancodes.right):
+		case 108:
 			move_dir = 2;
 			break;
-		case snow_systems_input_Keycodes.from_scan(snow_systems_input_Scancodes.down):
+		case 107:
 			move_dir = 3;
 			break;
 		}
-		if(move_dir != -1) this.send_ajax(2,{ move_dir : move_dir});
+		if(move_dir != -1 && !this.waiting_for_turn) {
+			haxe_Log.trace("Sending move",{ fileName : "Main.hx", lineNumber : 132, className : "Main", methodName : "onkeydown"});
+			this.send_ajax(0,{ move_dir : move_dir});
+			this.waiting_for_turn = true;
+		}
+	}
+	,update: function(dt) {
+		var move = 40 * dt * Luxe.camera.get_pos().y / 80;
+		if(Luxe.input.inputdown("cam_left")) {
+			var _g = Luxe.camera.get_pos();
+			_g.set_x(_g.x - 40 * dt);
+		} else if(Luxe.input.inputdown("cam_right")) {
+			var _g1 = Luxe.camera.get_pos();
+			_g1.set_x(_g1.x + 40 * dt);
+		}
+		if(Luxe.input.inputdown("cam_up")) {
+			var _g2 = Luxe.camera.get_pos();
+			_g2.set_z(_g2.z - 40 * dt);
+		} else if(Luxe.input.inputdown("cam_down")) {
+			var _g3 = Luxe.camera.get_pos();
+			_g3.set_z(_g3.z + 40 * dt);
+		}
+	}
+	,onmousewheel: function(event) {
+		var _g = Luxe.camera.get_pos();
+		_g.set_y(_g.y + event.yrel * 0.3);
+		haxe_Log.trace(Luxe.camera.get_pos().y,{ fileName : "Main.hx", lineNumber : 158, className : "Main", methodName : "onmousewheel"});
 	}
 	,send_ajax: function(id,data) {
 		data.socket_id = this.socket_id;
@@ -544,7 +604,18 @@ Main.prototype = $extend(luxe_Game.prototype,{
 	,onkeyup: function(e) {
 		if(e.keycode == 27) Luxe.core.shutdown();
 	}
-	,update: function(dt) {
+	,connect_input: function() {
+		Luxe.input.bind_key("cam_up",snow_systems_input_Keycodes.up);
+		Luxe.input.bind_key("cam_down",snow_systems_input_Keycodes.down);
+		Luxe.input.bind_key("cam_left",snow_systems_input_Keycodes.left);
+		Luxe.input.bind_key("cam_right",snow_systems_input_Keycodes.right);
+		Luxe.input.bind_key("SHOOT",32);
+	}
+	,onmousedown: function(e) {
+		var mouse_ray = Luxe.camera.view.screen_point_to_ray(e.pos);
+		var world_pos = Luxe.utils.geometry.intersect_ray_plane(mouse_ray.origin,mouse_ray.dir,new phoenix_Vector(0,1,0),new phoenix_Vector(0,0,0));
+		var tile_x = Math.floor(world_pos.x + 0.5);
+		var tile_y = Math.floor(world_pos.z + 0.5);
 	}
 	,__class__: Main
 });
@@ -780,6 +851,802 @@ _$UInt_UInt_$Impl_$.toFloat = function(this1) {
 	var $int = this1;
 	if($int < 0) return 4294967296.0 + $int; else return $int + 0.0;
 };
+var luxe_Objects = function(_name,_id) {
+	if(_id == null) _id = "";
+	if(_name == null) _name = "";
+	this.name = "";
+	this.id = "";
+	luxe_Emitter.call(this);
+	this.set_name(_name);
+	this.set_id(_id == ""?Luxe.utils.uniqueid():_id);
+};
+$hxClasses["luxe.Objects"] = luxe_Objects;
+luxe_Objects.__name__ = ["luxe","Objects"];
+luxe_Objects.__super__ = luxe_Emitter;
+luxe_Objects.prototype = $extend(luxe_Emitter.prototype,{
+	set_name: function(_name) {
+		return this.name = _name;
+	}
+	,set_id: function(_id) {
+		return this.id = _id;
+	}
+	,get_name: function() {
+		return this.name;
+	}
+	,get_id: function() {
+		return this.id;
+	}
+	,__class__: luxe_Objects
+	,__properties__: {set_name:"set_name",get_name:"get_name",set_id:"set_id",get_id:"get_id"}
+});
+var luxe_Entity = function(_options) {
+	this.component_count = 0;
+	this.active = true;
+	this.fixed_rate = 0;
+	this.started = false;
+	this.inited = false;
+	this.destroyed = false;
+	luxe_Objects.call(this,"entity");
+	var _g = this;
+	_g.set_name(_g.get_name() + ("." + this.get_id()));
+	this.options = _options;
+	this._components = new luxe_components_Components(this);
+	this.children = [];
+	this.events = new luxe_Events();
+	if(this.options != null && this.options.transform != null) this.set_transform(this.options.transform); else this.set_transform(new phoenix_Transform());
+	this.get_transform().listen_pos($bind(this,this.set_pos_from_transform));
+	this.get_transform().listen_scale($bind(this,this.set_scale_from_transform));
+	this.get_transform().listen_origin($bind(this,this.set_origin_from_transform));
+	this.get_transform().listen_parent($bind(this,this.set_parent_from_transform));
+	this.get_transform().listen_rotation($bind(this,this.set_rotation_from_transform));
+	if(this.options != null) {
+		if(this.options.name_unique == null) this.options.name_unique = false;
+		this.options.name_unique;
+		if(this.options.name != null) {
+			this.set_name(this.options.name);
+			if(this.options.name_unique) {
+				var _g1 = this;
+				_g1.set_name(_g1.get_name() + ("." + this.get_id()));
+			}
+		}
+		if(this.options.pos != null) {
+			var _op = this.options.pos;
+			this.set_pos(new phoenix_Vector(_op.x,_op.y,_op.z,_op.w));
+		}
+		if(this.options.scale != null) {
+			var _os = this.options.scale;
+			this.set_scale(new phoenix_Vector(_os.x,_os.y,_os.z,_os.w));
+		}
+		var _should_add = true;
+		if(this.options.no_scene != null) {
+			if(this.options.no_scene == true) {
+				_should_add = false;
+				null;
+			}
+		}
+		if(this.options.parent != null) {
+			_should_add = false;
+			this.set_parent(this.options.parent);
+			null;
+		}
+		if(_should_add) {
+			if(this.options.scene != null) {
+				this.set_scene(this.options.scene);
+				null;
+			} else {
+				this.set_scene(Luxe.scene);
+				null;
+			}
+		}
+	} else {
+		this.set_scene(Luxe.scene);
+		null;
+	}
+	if(this.get_scene() != null) this.get_scene().add(this); else null;
+	null;
+};
+$hxClasses["luxe.Entity"] = luxe_Entity;
+luxe_Entity.__name__ = ["luxe","Entity"];
+luxe_Entity.__super__ = luxe_Objects;
+luxe_Entity.prototype = $extend(luxe_Objects.prototype,{
+	init: function() {
+	}
+	,update: function(dt) {
+	}
+	,onfixedupdate: function(rate) {
+	}
+	,onreset: function() {
+	}
+	,ondestroy: function() {
+	}
+	,onkeyup: function(event) {
+	}
+	,onkeydown: function(event) {
+	}
+	,ontextinput: function(event) {
+	}
+	,oninputdown: function(name,event) {
+	}
+	,oninputup: function(name,event) {
+	}
+	,onmousedown: function(event) {
+	}
+	,onmouseup: function(event) {
+	}
+	,onmousemove: function(event) {
+	}
+	,onmousewheel: function(event) {
+	}
+	,ontouchdown: function(event) {
+	}
+	,ontouchup: function(event) {
+	}
+	,ontouchmove: function(event) {
+	}
+	,ongamepadup: function(event) {
+	}
+	,ongamepaddown: function(event) {
+	}
+	,ongamepadaxis: function(event) {
+	}
+	,ongamepaddevice: function(event) {
+	}
+	,onwindowmoved: function(event) {
+	}
+	,onwindowresized: function(event) {
+	}
+	,onwindowsized: function(event) {
+	}
+	,onwindowminimized: function(event) {
+	}
+	,onwindowrestored: function(event) {
+	}
+	,add: function(_component) {
+		this.component_count++;
+		return this._components.add(_component);
+	}
+	,remove: function(_name) {
+		this.component_count--;
+		return this._components.remove(_name);
+	}
+	,get: function(_name,_in_children) {
+		if(_in_children == null) _in_children = false;
+		return this._components.get(_name,_in_children);
+	}
+	,get_any: function(_name,_in_children,_first_only) {
+		if(_first_only == null) _first_only = true;
+		if(_in_children == null) _in_children = false;
+		return this._components.get_any(_name,_in_children,_first_only);
+	}
+	,has: function(_name) {
+		return this._components.has(_name);
+	}
+	,_init: function() {
+		this.init();
+		this.emit(2);
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.init();
+			}
+		}
+		if(this.children.length > 0) {
+			var _g = 0;
+			var _g1 = this.children;
+			while(_g < _g1.length) {
+				var _child = _g1[_g];
+				++_g;
+				_child._init();
+			}
+		}
+		this.inited = true;
+	}
+	,_reset: function(_) {
+		this.onreset();
+		this.emit(3);
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.onreset();
+			}
+		}
+		if(this.children.length > 0) {
+			var _g = 0;
+			var _g1 = this.children;
+			while(_g < _g1.length) {
+				var _child = _g1[_g];
+				++_g;
+				_child._reset(_);
+				null;
+			}
+		}
+		this._set_fixed_rate_timer(this.fixed_rate);
+		this.started = true;
+	}
+	,destroy: function(_from_parent) {
+		if(_from_parent == null) _from_parent = false;
+		if(!(this.destroyed == false)) throw new js__$Boot_HaxeError(luxe_DebugError.assertion("destroyed == false" + (" ( " + ("entity / destroying repeatedly " + this.get_name()) + " )")));
+		if(this.children.length > 0) {
+			var _g = 0;
+			var _g1 = this.children;
+			while(_g < _g1.length) {
+				var _child = _g1[_g];
+				++_g;
+				_child.destroy(true);
+				_child = null;
+			}
+		}
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.onremoved();
+				_component.ondestroy();
+				_component = null;
+			}
+		}
+		this.children = null;
+		this._components.destroy();
+		this._components = null;
+		this.emit(8);
+		this.ondestroy();
+		if(this.get_parent() != null && !_from_parent) this.get_parent()._remove_child(this);
+		if(this.fixed_rate_timer != null) {
+			this.fixed_rate_timer.stop();
+			this.fixed_rate_timer = null;
+		}
+		this.destroyed = true;
+		this.inited = false;
+		this.started = false;
+		if(this.get_scene() != null) this.get_scene().remove(this);
+		if(this.events != null) {
+			this.events.destroy();
+			this.events = null;
+		}
+		if(this.get_transform() != null) {
+			this.get_transform().destroy();
+			this.set_transform(null);
+		}
+		this._emitter_destroy();
+		this.set_id(null);
+	}
+	,_update: function(dt) {
+		if(this.destroyed) return;
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.get_transform().clean_check();
+		this.update(dt);
+		if(this.events != null) this.events.process();
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.update(dt);
+			}
+		}
+		if(this.children != null && this.children.length > 0) {
+			var _g = 0;
+			var _g1 = this.children;
+			while(_g < _g1.length) {
+				var _child = _g1[_g];
+				++_g;
+				_child._update(dt);
+			}
+		}
+	}
+	,_fixed_update: function() {
+		if(this.destroyed) return;
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.emit(7);
+		this.onfixedupdate(this.fixed_rate);
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.onfixedupdate(this.fixed_rate);
+			}
+		}
+		if(this.children.length > 0) {
+			var _g = 0;
+			var _g1 = this.children;
+			while(_g < _g1.length) {
+				var _child = _g1[_g];
+				++_g;
+				_child._fixed_update();
+			}
+		}
+	}
+	,_find_emit_source: function(_from_unlisten) {
+		if(_from_unlisten == null) _from_unlisten = false;
+		var source = null;
+		if(this.get_scene() != null) source = this.get_scene(); else if(this.get_parent() != null) {
+			var looking = true;
+			var _parent = this.get_parent();
+			while(looking) if(_parent.get_scene() == null) {
+				if(_parent.get_parent() == null) {
+					if(!_from_unlisten) haxe_Log.trace("   i / entity / " + "entity has no parent or scene, currently no core events will reach it.",{ fileName : "Entity.hx", lineNumber : 511, className : "luxe.Entity", methodName : "_find_emit_source"});
+					looking = false;
+					break;
+				} else _parent = _parent.get_parent();
+			} else {
+				source = _parent.get_scene();
+				looking = false;
+				break;
+			}
+		} else if(!_from_unlisten) haxe_Log.trace("   i / entity / " + "entity has no parent or scene, currently no core events will reach it.",{ fileName : "Entity.hx", lineNumber : 533, className : "luxe.Entity", methodName : "_find_emit_source"});
+		return source;
+	}
+	,_listen: function(_event,_handler,_self) {
+		if(_self == null) _self = false;
+		if(!_self) this.on(_event,_handler);
+		var source = this._find_emit_source(null);
+		if(source != null) switch(_event) {
+		case 13:
+			source.on(_event,$bind(this,this._keyup));
+			break;
+		case 12:
+			source.on(_event,$bind(this,this._keydown));
+			break;
+		case 14:
+			source.on(_event,$bind(this,this._textinput));
+			break;
+		case 17:
+			source.on(_event,$bind(this,this._mousedown));
+			break;
+		case 18:
+			source.on(_event,$bind(this,this._mouseup));
+			break;
+		case 19:
+			source.on(_event,$bind(this,this._mousemove));
+			break;
+		case 20:
+			source.on(_event,$bind(this,this._mousewheel));
+			break;
+		case 21:
+			source.on(_event,$bind(this,this._touchdown));
+			break;
+		case 22:
+			source.on(_event,$bind(this,this._touchup));
+			break;
+		case 23:
+			source.on(_event,$bind(this,this._touchmove));
+			break;
+		case 16:
+			source.on(_event,$bind(this,this._inputup));
+			break;
+		case 15:
+			source.on(_event,$bind(this,this._inputdown));
+			break;
+		case 25:
+			source.on(_event,$bind(this,this._gamepaddown));
+			break;
+		case 26:
+			source.on(_event,$bind(this,this._gamepadup));
+			break;
+		case 24:
+			source.on(_event,$bind(this,this._gamepadaxis));
+			break;
+		case 27:
+			source.on(_event,$bind(this,this._gamepaddevice));
+			break;
+		case 29:
+			source.on(_event,$bind(this,this._windowmoved));
+			break;
+		case 30:
+			source.on(_event,$bind(this,this._windowresized));
+			break;
+		case 31:
+			source.on(_event,$bind(this,this._windowsized));
+			break;
+		case 32:
+			source.on(_event,$bind(this,this._windowminimized));
+			break;
+		case 33:
+			source.on(_event,$bind(this,this._windowrestored));
+			break;
+		}
+	}
+	,_unlisten: function(_event,_handler,_self) {
+		if(_self == null) _self = false;
+		var source = this._find_emit_source(true);
+		if(!_self) this.off(_event,_handler);
+		if(source != null) switch(_event) {
+		case 13:
+			source.off(_event,$bind(this,this._keyup));
+			break;
+		case 12:
+			source.off(_event,$bind(this,this._keydown));
+			break;
+		case 14:
+			source.off(_event,$bind(this,this._textinput));
+			break;
+		case 17:
+			source.off(_event,$bind(this,this._mousedown));
+			break;
+		case 18:
+			source.off(_event,$bind(this,this._mouseup));
+			break;
+		case 19:
+			source.off(_event,$bind(this,this._mousemove));
+			break;
+		case 20:
+			source.off(_event,$bind(this,this._mousewheel));
+			break;
+		case 21:
+			source.off(_event,$bind(this,this._touchdown));
+			break;
+		case 22:
+			source.off(_event,$bind(this,this._touchup));
+			break;
+		case 23:
+			source.off(_event,$bind(this,this._touchmove));
+			break;
+		case 16:
+			source.off(_event,$bind(this,this._inputup));
+			break;
+		case 15:
+			source.off(_event,$bind(this,this._inputdown));
+			break;
+		case 25:
+			source.off(_event,$bind(this,this._gamepaddown));
+			break;
+		case 26:
+			source.off(_event,$bind(this,this._gamepadup));
+			break;
+		case 24:
+			source.off(_event,$bind(this,this._gamepadaxis));
+			break;
+		case 27:
+			source.off(_event,$bind(this,this._gamepaddevice));
+			break;
+		case 29:
+			source.off(_event,$bind(this,this._windowmoved));
+			break;
+		case 30:
+			source.off(_event,$bind(this,this._windowresized));
+			break;
+		case 31:
+			source.off(_event,$bind(this,this._windowsized));
+			break;
+		case 32:
+			source.off(_event,$bind(this,this._windowminimized));
+			break;
+		case 33:
+			source.off(_event,$bind(this,this._windowrestored));
+			break;
+		}
+	}
+	,_detach_scene: function() {
+		if(this.get_scene() != null) {
+			this.get_scene().off(3,$bind(this,this._reset));
+			this.get_scene().off(8,$bind(this,this.destroy));
+			this.get_scene().off(13,$bind(this,this._keyup));
+			this.get_scene().off(12,$bind(this,this._keydown));
+			this.get_scene().off(14,$bind(this,this._textinput));
+			this.get_scene().off(17,$bind(this,this._mousedown));
+			this.get_scene().off(18,$bind(this,this._mouseup));
+			this.get_scene().off(19,$bind(this,this._mousemove));
+			this.get_scene().off(20,$bind(this,this._mousewheel));
+			this.get_scene().off(21,$bind(this,this._touchdown));
+			this.get_scene().off(22,$bind(this,this._touchup));
+			this.get_scene().off(23,$bind(this,this._touchmove));
+			this.get_scene().off(16,$bind(this,this._inputup));
+			this.get_scene().off(15,$bind(this,this._inputdown));
+			this.get_scene().off(25,$bind(this,this._gamepaddown));
+			this.get_scene().off(26,$bind(this,this._gamepadup));
+			this.get_scene().off(24,$bind(this,this._gamepadaxis));
+			this.get_scene().off(27,$bind(this,this._gamepaddevice));
+			this.get_scene().off(29,$bind(this,this._windowmoved));
+			this.get_scene().off(30,$bind(this,this._windowresized));
+			this.get_scene().off(31,$bind(this,this._windowsized));
+			this.get_scene().off(32,$bind(this,this._windowminimized));
+			this.get_scene().off(33,$bind(this,this._windowrestored));
+		}
+	}
+	,_attach_scene: function() {
+		if(this.get_scene() != null) {
+			this.get_scene().on(3,$bind(this,this._reset));
+			this.get_scene().on(8,$bind(this,this.destroy));
+		}
+	}
+	,_keyup: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onkeyup(_event);
+		this.emit(13,_event);
+	}
+	,_keydown: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onkeydown(_event);
+		this.emit(12,_event);
+	}
+	,_textinput: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ontextinput(_event);
+		this.emit(14,_event);
+	}
+	,_mousedown: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onmousedown(_event);
+		this.emit(17,_event);
+	}
+	,_mouseup: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onmouseup(_event);
+		this.emit(18,_event);
+	}
+	,_mousewheel: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onmousewheel(_event);
+		this.emit(20,_event);
+	}
+	,_mousemove: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onmousemove(_event);
+		this.emit(19,_event);
+	}
+	,_touchdown: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ontouchdown(_event);
+		this.emit(21,_event);
+	}
+	,_touchup: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ontouchup(_event);
+		this.emit(22,_event);
+	}
+	,_touchmove: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ontouchmove(_event);
+		this.emit(23,_event);
+	}
+	,_gamepadaxis: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ongamepadaxis(_event);
+		this.emit(24,_event);
+	}
+	,_gamepaddown: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ongamepaddown(_event);
+		this.emit(25,_event);
+	}
+	,_gamepadup: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ongamepadup(_event);
+		this.emit(26,_event);
+	}
+	,_gamepaddevice: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.ongamepaddevice(_event);
+		this.emit(27,_event);
+	}
+	,_windowmoved: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onwindowmoved(_event);
+		this.emit(29,_event);
+	}
+	,_windowresized: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onwindowresized(_event);
+		this.emit(30,_event);
+	}
+	,_windowsized: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onwindowsized(_event);
+		this.emit(31,_event);
+	}
+	,_windowminimized: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onwindowminimized(_event);
+		this.emit(32,_event);
+	}
+	,_windowrestored: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.onwindowrestored(_event);
+		this.emit(33,_event);
+	}
+	,_inputdown: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.oninputdown(_event.name,_event.event);
+		this.emit(15,_event);
+	}
+	,_inputup: function(_event) {
+		if(!this.get_active() || !this.inited || !this.started) return;
+		this.oninputup(_event.name,_event.event);
+		this.emit(16,_event);
+	}
+	,get_fixed_rate: function() {
+		return this.fixed_rate;
+	}
+	,set_fixed_rate: function(_rate) {
+		this.fixed_rate = _rate;
+		if(this.started) {
+			if(this.fixed_rate_timer != null) {
+				this.fixed_rate_timer.stop();
+				this.fixed_rate_timer = null;
+			}
+			if(_rate != 0 && this.get_parent() == null && !this.destroyed) {
+				this.fixed_rate_timer = new snow_api_Timer(_rate);
+				this.fixed_rate_timer.run = $bind(this,this._fixed_update);
+			}
+		}
+		return this.fixed_rate;
+	}
+	,_stop_fixed_rate_timer: function() {
+		if(this.fixed_rate_timer != null) {
+			this.fixed_rate_timer.stop();
+			this.fixed_rate_timer = null;
+		}
+	}
+	,_set_fixed_rate_timer: function(_rate) {
+		if(this.fixed_rate_timer != null) {
+			this.fixed_rate_timer.stop();
+			this.fixed_rate_timer = null;
+		}
+		if(_rate != 0 && this.get_parent() == null && !this.destroyed) {
+			this.fixed_rate_timer = new snow_api_Timer(_rate);
+			this.fixed_rate_timer.run = $bind(this,this._fixed_update);
+		}
+	}
+	,get_components: function() {
+		return this._components.components;
+	}
+	,_add_child: function(child) {
+		this.children.push(child);
+		if(child.get_scene() != null) {
+			var removed = child.get_scene().remove(child);
+		} else null;
+	}
+	,_remove_child: function(child) {
+		HxOverrides.remove(this.children,child);
+	}
+	,set_pos_from_transform: function(_pos) {
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.entity_pos_change(_pos);
+			}
+		}
+	}
+	,set_rotation_from_transform: function(_rotation) {
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.entity_rotation_change(_rotation);
+			}
+		}
+	}
+	,set_scale_from_transform: function(_scale) {
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.entity_scale_change(_scale);
+			}
+		}
+	}
+	,set_origin_from_transform: function(_origin) {
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.entity_origin_change(_origin);
+			}
+		}
+	}
+	,set_parent_from_transform: function(_parent) {
+		if(this.component_count > 0) {
+			var _g_index = 0;
+			var _g_map = this._components.components;
+			while(_g_index < _g_map._keys.length) {
+				var _component = _g_map.get(_g_map._keys[_g_index++]);
+				_component.entity_parent_change(_parent);
+			}
+		}
+	}
+	,set_pos: function(_p) {
+		return this.get_transform().set_pos(_p);
+	}
+	,get_pos: function() {
+		return this.get_transform().get_pos();
+	}
+	,set_rotation: function(_r) {
+		return this.get_transform().set_rotation(_r);
+	}
+	,get_rotation: function() {
+		return this.get_transform().get_rotation();
+	}
+	,set_scale: function(_s) {
+		return this.get_transform().set_scale(_s);
+	}
+	,get_scale: function() {
+		return this.get_transform().get_scale();
+	}
+	,set_origin: function(_origin) {
+		return this.get_transform().set_origin(_origin);
+	}
+	,get_origin: function() {
+		return this.get_transform().get_origin();
+	}
+	,set_transform: function(_transform) {
+		return this.transform = _transform;
+	}
+	,get_transform: function() {
+		return this.transform;
+	}
+	,set_parent: function(other) {
+		if(!(other != this)) throw new js__$Boot_HaxeError(luxe_DebugError.assertion("other != this" + (" ( " + "Entity setting itself as parent makes no sense" + " )")));
+		if(this.get_parent() != null) this.get_parent()._remove_child(this);
+		this.parent = other;
+		if(this.get_parent() != null) {
+			this.get_parent()._add_child(this);
+			this.get_transform().set_parent(this.get_parent().get_transform());
+		} else this.get_transform().set_parent(null);
+		return this.get_parent();
+	}
+	,get_parent: function() {
+		return this.parent;
+	}
+	,set_scene: function(_scene) {
+		this._detach_scene();
+		this.scene = _scene;
+		this._attach_scene();
+		return this.get_scene();
+	}
+	,get_scene: function() {
+		return this.scene;
+	}
+	,set_name: function(_name) {
+		var _scene = this.get_scene();
+		if(_scene != null && this.get_name() != null) {
+			var key = this.get_name();
+			_scene.entities.remove(key);
+			if(_scene.entities.exists(_name)) haxe_Log.trace("    i / scene / " + ("" + _scene.get_name() + " / adding a second entity named " + _name + "!\n                This will replace the existing one, possibly leaving the previous one in limbo."),{ fileName : "Scene.hx", lineNumber : 93, className : "luxe.Scene", methodName : "handle_duplicate_warning"});
+			_scene.entities.set(_name,this);
+			_scene._has_changed = true;
+		}
+		return this.name = _name;
+	}
+	,set_active: function(_active) {
+		return this.active = _active;
+	}
+	,get_active: function() {
+		return this.active;
+	}
+	,__class__: luxe_Entity
+	,__properties__: $extend(luxe_Objects.prototype.__properties__,{set_origin:"set_origin",get_origin:"get_origin",set_scale:"set_scale",get_scale:"get_scale",set_rotation:"set_rotation",get_rotation:"get_rotation",set_pos:"set_pos",get_pos:"get_pos",set_transform:"set_transform",get_transform:"get_transform",set_active:"set_active",get_active:"get_active",set_scene:"set_scene",get_scene:"get_scene",set_parent:"set_parent",get_parent:"get_parent",set_fixed_rate:"set_fixed_rate",get_fixed_rate:"get_fixed_rate",get_components:"get_components"})
+});
+var entities_Player = function(_x,_y,_obj_id,_tex_id) {
+	luxe_Entity.call(this,{ });
+	this.obj_id = _obj_id;
+	this.tex_id = _tex_id;
+};
+$hxClasses["entities.Player"] = entities_Player;
+entities_Player.__name__ = ["entities","Player"];
+entities_Player.__super__ = luxe_Entity;
+entities_Player.prototype = $extend(luxe_Entity.prototype,{
+	init: function() {
+		luxe_Entity.prototype.init.call(this);
+		this.add(new luxe_components_render_MeshComponent({ file : this.obj_id, texture : Luxe.resources.cache.get(this.tex_id), depth : 2}));
+	}
+	,update: function(delta) {
+	}
+	,ondestroy: function() {
+		luxe_Entity.prototype.ondestroy.call(this);
+	}
+	,__class__: entities_Player
+});
 var haxe_StackItem = $hxClasses["haxe.StackItem"] = { __ename__ : ["haxe","StackItem"], __constructs__ : ["CFunction","Module","FilePos","Method","LocalFunction"] };
 haxe_StackItem.CFunction = ["CFunction",0];
 haxe_StackItem.CFunction.toString = $estr;
@@ -1936,6 +2803,117 @@ haxe_ds_StringMap.prototype = {
 	}
 	,__class__: haxe_ds_StringMap
 };
+var haxe_io_BytesBuffer = function() {
+	this.b = [];
+};
+$hxClasses["haxe.io.BytesBuffer"] = haxe_io_BytesBuffer;
+haxe_io_BytesBuffer.__name__ = ["haxe","io","BytesBuffer"];
+haxe_io_BytesBuffer.prototype = {
+	addBytes: function(src,pos,len) {
+		if(pos < 0 || len < 0 || pos + len > src.length) throw new js__$Boot_HaxeError(haxe_io_Error.OutsideBounds);
+		var b1 = this.b;
+		var b2 = src.b;
+		var _g1 = pos;
+		var _g = pos + len;
+		while(_g1 < _g) {
+			var i = _g1++;
+			this.b.push(b2[i]);
+		}
+	}
+	,getBytes: function() {
+		var bytes = new haxe_io_Bytes(new Uint8Array(this.b).buffer);
+		this.b = null;
+		return bytes;
+	}
+	,__class__: haxe_io_BytesBuffer
+};
+var haxe_io_Input = function() { };
+$hxClasses["haxe.io.Input"] = haxe_io_Input;
+haxe_io_Input.__name__ = ["haxe","io","Input"];
+haxe_io_Input.prototype = {
+	readByte: function() {
+		throw new js__$Boot_HaxeError("Not implemented");
+	}
+	,readBytes: function(s,pos,len) {
+		var k = len;
+		var b = s.b;
+		if(pos < 0 || len < 0 || pos + len > s.length) throw new js__$Boot_HaxeError(haxe_io_Error.OutsideBounds);
+		while(k > 0) {
+			b[pos] = this.readByte();
+			pos++;
+			k--;
+		}
+		return len;
+	}
+	,set_bigEndian: function(b) {
+		this.bigEndian = b;
+		return b;
+	}
+	,readAll: function(bufsize) {
+		if(bufsize == null) bufsize = 16384;
+		var buf = haxe_io_Bytes.alloc(bufsize);
+		var total = new haxe_io_BytesBuffer();
+		try {
+			while(true) {
+				var len = this.readBytes(buf,0,bufsize);
+				if(len == 0) throw new js__$Boot_HaxeError(haxe_io_Error.Blocked);
+				total.addBytes(buf,0,len);
+			}
+		} catch( e ) {
+			if (e instanceof js__$Boot_HaxeError) e = e.val;
+			if( js_Boot.__instanceof(e,haxe_io_Eof) ) {
+			} else throw(e);
+		}
+		return total.getBytes();
+	}
+	,__class__: haxe_io_Input
+	,__properties__: {set_bigEndian:"set_bigEndian"}
+};
+var haxe_io_BytesInput = function(b,pos,len) {
+	if(pos == null) pos = 0;
+	if(len == null) len = b.length - pos;
+	if(pos < 0 || len < 0 || pos + len > b.length) throw new js__$Boot_HaxeError(haxe_io_Error.OutsideBounds);
+	this.b = b.b;
+	this.pos = pos;
+	this.len = len;
+	this.totlen = len;
+};
+$hxClasses["haxe.io.BytesInput"] = haxe_io_BytesInput;
+haxe_io_BytesInput.__name__ = ["haxe","io","BytesInput"];
+haxe_io_BytesInput.__super__ = haxe_io_Input;
+haxe_io_BytesInput.prototype = $extend(haxe_io_Input.prototype,{
+	readByte: function() {
+		if(this.len == 0) throw new js__$Boot_HaxeError(new haxe_io_Eof());
+		this.len--;
+		return this.b[this.pos++];
+	}
+	,readBytes: function(buf,pos,len) {
+		if(pos < 0 || len < 0 || pos + len > buf.length) throw new js__$Boot_HaxeError(haxe_io_Error.OutsideBounds);
+		if(this.len == 0 && len > 0) throw new js__$Boot_HaxeError(new haxe_io_Eof());
+		if(this.len < len) len = this.len;
+		var b1 = this.b;
+		var b2 = buf.b;
+		var _g = 0;
+		while(_g < len) {
+			var i = _g++;
+			b2[pos + i] = b1[this.pos + i];
+		}
+		this.pos += len;
+		this.len -= len;
+		return len;
+	}
+	,__class__: haxe_io_BytesInput
+});
+var haxe_io_Eof = function() {
+};
+$hxClasses["haxe.io.Eof"] = haxe_io_Eof;
+haxe_io_Eof.__name__ = ["haxe","io","Eof"];
+haxe_io_Eof.prototype = {
+	toString: function() {
+		return "Eof";
+	}
+	,__class__: haxe_io_Eof
+};
 var haxe_io_Error = $hxClasses["haxe.io.Error"] = { __ename__ : ["haxe","io","Error"], __constructs__ : ["Blocked","Overflow","OutsideBounds","Custom"] };
 haxe_io_Error.Blocked = ["Blocked",0];
 haxe_io_Error.Blocked.toString = $estr;
@@ -2114,6 +3092,15 @@ haxe_io_Path.addTrailingSlash = function(path) {
 haxe_io_Path.prototype = {
 	__class__: haxe_io_Path
 };
+var haxe_io_StringInput = function(s) {
+	haxe_io_BytesInput.call(this,haxe_io_Bytes.ofString(s));
+};
+$hxClasses["haxe.io.StringInput"] = haxe_io_StringInput;
+haxe_io_StringInput.__name__ = ["haxe","io","StringInput"];
+haxe_io_StringInput.__super__ = haxe_io_BytesInput;
+haxe_io_StringInput.prototype = $extend(haxe_io_BytesInput.prototype,{
+	__class__: haxe_io_StringInput
+});
 var js__$Boot_HaxeError = function(val) {
 	Error.call(this);
 	this.val = val;
@@ -2582,782 +3569,6 @@ luxe_SizeMode.cover.__enum__ = luxe_SizeMode;
 luxe_SizeMode.contain = ["contain",2];
 luxe_SizeMode.contain.toString = $estr;
 luxe_SizeMode.contain.__enum__ = luxe_SizeMode;
-var luxe_Objects = function(_name,_id) {
-	if(_id == null) _id = "";
-	if(_name == null) _name = "";
-	this.name = "";
-	this.id = "";
-	luxe_Emitter.call(this);
-	this.set_name(_name);
-	this.set_id(_id == ""?Luxe.utils.uniqueid():_id);
-};
-$hxClasses["luxe.Objects"] = luxe_Objects;
-luxe_Objects.__name__ = ["luxe","Objects"];
-luxe_Objects.__super__ = luxe_Emitter;
-luxe_Objects.prototype = $extend(luxe_Emitter.prototype,{
-	set_name: function(_name) {
-		return this.name = _name;
-	}
-	,set_id: function(_id) {
-		return this.id = _id;
-	}
-	,get_name: function() {
-		return this.name;
-	}
-	,get_id: function() {
-		return this.id;
-	}
-	,__class__: luxe_Objects
-	,__properties__: {set_name:"set_name",get_name:"get_name",set_id:"set_id",get_id:"get_id"}
-});
-var luxe_Entity = function(_options) {
-	this.component_count = 0;
-	this.active = true;
-	this.fixed_rate = 0;
-	this.started = false;
-	this.inited = false;
-	this.destroyed = false;
-	luxe_Objects.call(this,"entity");
-	var _g = this;
-	_g.set_name(_g.get_name() + ("." + this.get_id()));
-	this.options = _options;
-	this._components = new luxe_components_Components(this);
-	this.children = [];
-	this.events = new luxe_Events();
-	if(this.options != null && this.options.transform != null) this.set_transform(this.options.transform); else this.set_transform(new phoenix_Transform());
-	this.get_transform().listen_pos($bind(this,this.set_pos_from_transform));
-	this.get_transform().listen_scale($bind(this,this.set_scale_from_transform));
-	this.get_transform().listen_origin($bind(this,this.set_origin_from_transform));
-	this.get_transform().listen_parent($bind(this,this.set_parent_from_transform));
-	this.get_transform().listen_rotation($bind(this,this.set_rotation_from_transform));
-	if(this.options != null) {
-		if(this.options.name_unique == null) this.options.name_unique = false;
-		this.options.name_unique;
-		if(this.options.name != null) {
-			this.set_name(this.options.name);
-			if(this.options.name_unique) {
-				var _g1 = this;
-				_g1.set_name(_g1.get_name() + ("." + this.get_id()));
-			}
-		}
-		if(this.options.pos != null) {
-			var _op = this.options.pos;
-			this.set_pos(new phoenix_Vector(_op.x,_op.y,_op.z,_op.w));
-		}
-		if(this.options.scale != null) {
-			var _os = this.options.scale;
-			this.set_scale(new phoenix_Vector(_os.x,_os.y,_os.z,_os.w));
-		}
-		var _should_add = true;
-		if(this.options.no_scene != null) {
-			if(this.options.no_scene == true) {
-				_should_add = false;
-				null;
-			}
-		}
-		if(this.options.parent != null) {
-			_should_add = false;
-			this.set_parent(this.options.parent);
-			null;
-		}
-		if(_should_add) {
-			if(this.options.scene != null) {
-				this.set_scene(this.options.scene);
-				null;
-			} else {
-				this.set_scene(Luxe.scene);
-				null;
-			}
-		}
-	} else {
-		this.set_scene(Luxe.scene);
-		null;
-	}
-	if(this.get_scene() != null) this.get_scene().add(this); else null;
-	null;
-};
-$hxClasses["luxe.Entity"] = luxe_Entity;
-luxe_Entity.__name__ = ["luxe","Entity"];
-luxe_Entity.__super__ = luxe_Objects;
-luxe_Entity.prototype = $extend(luxe_Objects.prototype,{
-	init: function() {
-	}
-	,update: function(dt) {
-	}
-	,onfixedupdate: function(rate) {
-	}
-	,onreset: function() {
-	}
-	,ondestroy: function() {
-	}
-	,onkeyup: function(event) {
-	}
-	,onkeydown: function(event) {
-	}
-	,ontextinput: function(event) {
-	}
-	,oninputdown: function(name,event) {
-	}
-	,oninputup: function(name,event) {
-	}
-	,onmousedown: function(event) {
-	}
-	,onmouseup: function(event) {
-	}
-	,onmousemove: function(event) {
-	}
-	,onmousewheel: function(event) {
-	}
-	,ontouchdown: function(event) {
-	}
-	,ontouchup: function(event) {
-	}
-	,ontouchmove: function(event) {
-	}
-	,ongamepadup: function(event) {
-	}
-	,ongamepaddown: function(event) {
-	}
-	,ongamepadaxis: function(event) {
-	}
-	,ongamepaddevice: function(event) {
-	}
-	,onwindowmoved: function(event) {
-	}
-	,onwindowresized: function(event) {
-	}
-	,onwindowsized: function(event) {
-	}
-	,onwindowminimized: function(event) {
-	}
-	,onwindowrestored: function(event) {
-	}
-	,add: function(_component) {
-		this.component_count++;
-		return this._components.add(_component);
-	}
-	,remove: function(_name) {
-		this.component_count--;
-		return this._components.remove(_name);
-	}
-	,get: function(_name,_in_children) {
-		if(_in_children == null) _in_children = false;
-		return this._components.get(_name,_in_children);
-	}
-	,get_any: function(_name,_in_children,_first_only) {
-		if(_first_only == null) _first_only = true;
-		if(_in_children == null) _in_children = false;
-		return this._components.get_any(_name,_in_children,_first_only);
-	}
-	,has: function(_name) {
-		return this._components.has(_name);
-	}
-	,_init: function() {
-		this.init();
-		this.emit(2);
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.init();
-			}
-		}
-		if(this.children.length > 0) {
-			var _g = 0;
-			var _g1 = this.children;
-			while(_g < _g1.length) {
-				var _child = _g1[_g];
-				++_g;
-				_child._init();
-			}
-		}
-		this.inited = true;
-	}
-	,_reset: function(_) {
-		this.onreset();
-		this.emit(3);
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.onreset();
-			}
-		}
-		if(this.children.length > 0) {
-			var _g = 0;
-			var _g1 = this.children;
-			while(_g < _g1.length) {
-				var _child = _g1[_g];
-				++_g;
-				_child._reset(_);
-				null;
-			}
-		}
-		this._set_fixed_rate_timer(this.fixed_rate);
-		this.started = true;
-	}
-	,destroy: function(_from_parent) {
-		if(_from_parent == null) _from_parent = false;
-		if(!(this.destroyed == false)) throw new js__$Boot_HaxeError(luxe_DebugError.assertion("destroyed == false" + (" ( " + ("entity / destroying repeatedly " + this.get_name()) + " )")));
-		if(this.children.length > 0) {
-			var _g = 0;
-			var _g1 = this.children;
-			while(_g < _g1.length) {
-				var _child = _g1[_g];
-				++_g;
-				_child.destroy(true);
-				_child = null;
-			}
-		}
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.onremoved();
-				_component.ondestroy();
-				_component = null;
-			}
-		}
-		this.children = null;
-		this._components.destroy();
-		this._components = null;
-		this.emit(8);
-		this.ondestroy();
-		if(this.get_parent() != null && !_from_parent) this.get_parent()._remove_child(this);
-		if(this.fixed_rate_timer != null) {
-			this.fixed_rate_timer.stop();
-			this.fixed_rate_timer = null;
-		}
-		this.destroyed = true;
-		this.inited = false;
-		this.started = false;
-		if(this.get_scene() != null) this.get_scene().remove(this);
-		if(this.events != null) {
-			this.events.destroy();
-			this.events = null;
-		}
-		if(this.get_transform() != null) {
-			this.get_transform().destroy();
-			this.set_transform(null);
-		}
-		this._emitter_destroy();
-		this.set_id(null);
-	}
-	,_update: function(dt) {
-		if(this.destroyed) return;
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.get_transform().clean_check();
-		this.update(dt);
-		if(this.events != null) this.events.process();
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.update(dt);
-			}
-		}
-		if(this.children != null && this.children.length > 0) {
-			var _g = 0;
-			var _g1 = this.children;
-			while(_g < _g1.length) {
-				var _child = _g1[_g];
-				++_g;
-				_child._update(dt);
-			}
-		}
-	}
-	,_fixed_update: function() {
-		if(this.destroyed) return;
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.emit(7);
-		this.onfixedupdate(this.fixed_rate);
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.onfixedupdate(this.fixed_rate);
-			}
-		}
-		if(this.children.length > 0) {
-			var _g = 0;
-			var _g1 = this.children;
-			while(_g < _g1.length) {
-				var _child = _g1[_g];
-				++_g;
-				_child._fixed_update();
-			}
-		}
-	}
-	,_find_emit_source: function(_from_unlisten) {
-		if(_from_unlisten == null) _from_unlisten = false;
-		var source = null;
-		if(this.get_scene() != null) source = this.get_scene(); else if(this.get_parent() != null) {
-			var looking = true;
-			var _parent = this.get_parent();
-			while(looking) if(_parent.get_scene() == null) {
-				if(_parent.get_parent() == null) {
-					if(!_from_unlisten) haxe_Log.trace("   i / entity / " + "entity has no parent or scene, currently no core events will reach it.",{ fileName : "Entity.hx", lineNumber : 511, className : "luxe.Entity", methodName : "_find_emit_source"});
-					looking = false;
-					break;
-				} else _parent = _parent.get_parent();
-			} else {
-				source = _parent.get_scene();
-				looking = false;
-				break;
-			}
-		} else if(!_from_unlisten) haxe_Log.trace("   i / entity / " + "entity has no parent or scene, currently no core events will reach it.",{ fileName : "Entity.hx", lineNumber : 533, className : "luxe.Entity", methodName : "_find_emit_source"});
-		return source;
-	}
-	,_listen: function(_event,_handler,_self) {
-		if(_self == null) _self = false;
-		if(!_self) this.on(_event,_handler);
-		var source = this._find_emit_source(null);
-		if(source != null) switch(_event) {
-		case 13:
-			source.on(_event,$bind(this,this._keyup));
-			break;
-		case 12:
-			source.on(_event,$bind(this,this._keydown));
-			break;
-		case 14:
-			source.on(_event,$bind(this,this._textinput));
-			break;
-		case 17:
-			source.on(_event,$bind(this,this._mousedown));
-			break;
-		case 18:
-			source.on(_event,$bind(this,this._mouseup));
-			break;
-		case 19:
-			source.on(_event,$bind(this,this._mousemove));
-			break;
-		case 20:
-			source.on(_event,$bind(this,this._mousewheel));
-			break;
-		case 21:
-			source.on(_event,$bind(this,this._touchdown));
-			break;
-		case 22:
-			source.on(_event,$bind(this,this._touchup));
-			break;
-		case 23:
-			source.on(_event,$bind(this,this._touchmove));
-			break;
-		case 16:
-			source.on(_event,$bind(this,this._inputup));
-			break;
-		case 15:
-			source.on(_event,$bind(this,this._inputdown));
-			break;
-		case 25:
-			source.on(_event,$bind(this,this._gamepaddown));
-			break;
-		case 26:
-			source.on(_event,$bind(this,this._gamepadup));
-			break;
-		case 24:
-			source.on(_event,$bind(this,this._gamepadaxis));
-			break;
-		case 27:
-			source.on(_event,$bind(this,this._gamepaddevice));
-			break;
-		case 29:
-			source.on(_event,$bind(this,this._windowmoved));
-			break;
-		case 30:
-			source.on(_event,$bind(this,this._windowresized));
-			break;
-		case 31:
-			source.on(_event,$bind(this,this._windowsized));
-			break;
-		case 32:
-			source.on(_event,$bind(this,this._windowminimized));
-			break;
-		case 33:
-			source.on(_event,$bind(this,this._windowrestored));
-			break;
-		}
-	}
-	,_unlisten: function(_event,_handler,_self) {
-		if(_self == null) _self = false;
-		var source = this._find_emit_source(true);
-		if(!_self) this.off(_event,_handler);
-		if(source != null) switch(_event) {
-		case 13:
-			source.off(_event,$bind(this,this._keyup));
-			break;
-		case 12:
-			source.off(_event,$bind(this,this._keydown));
-			break;
-		case 14:
-			source.off(_event,$bind(this,this._textinput));
-			break;
-		case 17:
-			source.off(_event,$bind(this,this._mousedown));
-			break;
-		case 18:
-			source.off(_event,$bind(this,this._mouseup));
-			break;
-		case 19:
-			source.off(_event,$bind(this,this._mousemove));
-			break;
-		case 20:
-			source.off(_event,$bind(this,this._mousewheel));
-			break;
-		case 21:
-			source.off(_event,$bind(this,this._touchdown));
-			break;
-		case 22:
-			source.off(_event,$bind(this,this._touchup));
-			break;
-		case 23:
-			source.off(_event,$bind(this,this._touchmove));
-			break;
-		case 16:
-			source.off(_event,$bind(this,this._inputup));
-			break;
-		case 15:
-			source.off(_event,$bind(this,this._inputdown));
-			break;
-		case 25:
-			source.off(_event,$bind(this,this._gamepaddown));
-			break;
-		case 26:
-			source.off(_event,$bind(this,this._gamepadup));
-			break;
-		case 24:
-			source.off(_event,$bind(this,this._gamepadaxis));
-			break;
-		case 27:
-			source.off(_event,$bind(this,this._gamepaddevice));
-			break;
-		case 29:
-			source.off(_event,$bind(this,this._windowmoved));
-			break;
-		case 30:
-			source.off(_event,$bind(this,this._windowresized));
-			break;
-		case 31:
-			source.off(_event,$bind(this,this._windowsized));
-			break;
-		case 32:
-			source.off(_event,$bind(this,this._windowminimized));
-			break;
-		case 33:
-			source.off(_event,$bind(this,this._windowrestored));
-			break;
-		}
-	}
-	,_detach_scene: function() {
-		if(this.get_scene() != null) {
-			this.get_scene().off(3,$bind(this,this._reset));
-			this.get_scene().off(8,$bind(this,this.destroy));
-			this.get_scene().off(13,$bind(this,this._keyup));
-			this.get_scene().off(12,$bind(this,this._keydown));
-			this.get_scene().off(14,$bind(this,this._textinput));
-			this.get_scene().off(17,$bind(this,this._mousedown));
-			this.get_scene().off(18,$bind(this,this._mouseup));
-			this.get_scene().off(19,$bind(this,this._mousemove));
-			this.get_scene().off(20,$bind(this,this._mousewheel));
-			this.get_scene().off(21,$bind(this,this._touchdown));
-			this.get_scene().off(22,$bind(this,this._touchup));
-			this.get_scene().off(23,$bind(this,this._touchmove));
-			this.get_scene().off(16,$bind(this,this._inputup));
-			this.get_scene().off(15,$bind(this,this._inputdown));
-			this.get_scene().off(25,$bind(this,this._gamepaddown));
-			this.get_scene().off(26,$bind(this,this._gamepadup));
-			this.get_scene().off(24,$bind(this,this._gamepadaxis));
-			this.get_scene().off(27,$bind(this,this._gamepaddevice));
-			this.get_scene().off(29,$bind(this,this._windowmoved));
-			this.get_scene().off(30,$bind(this,this._windowresized));
-			this.get_scene().off(31,$bind(this,this._windowsized));
-			this.get_scene().off(32,$bind(this,this._windowminimized));
-			this.get_scene().off(33,$bind(this,this._windowrestored));
-		}
-	}
-	,_attach_scene: function() {
-		if(this.get_scene() != null) {
-			this.get_scene().on(3,$bind(this,this._reset));
-			this.get_scene().on(8,$bind(this,this.destroy));
-		}
-	}
-	,_keyup: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onkeyup(_event);
-		this.emit(13,_event);
-	}
-	,_keydown: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onkeydown(_event);
-		this.emit(12,_event);
-	}
-	,_textinput: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ontextinput(_event);
-		this.emit(14,_event);
-	}
-	,_mousedown: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onmousedown(_event);
-		this.emit(17,_event);
-	}
-	,_mouseup: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onmouseup(_event);
-		this.emit(18,_event);
-	}
-	,_mousewheel: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onmousewheel(_event);
-		this.emit(20,_event);
-	}
-	,_mousemove: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onmousemove(_event);
-		this.emit(19,_event);
-	}
-	,_touchdown: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ontouchdown(_event);
-		this.emit(21,_event);
-	}
-	,_touchup: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ontouchup(_event);
-		this.emit(22,_event);
-	}
-	,_touchmove: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ontouchmove(_event);
-		this.emit(23,_event);
-	}
-	,_gamepadaxis: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ongamepadaxis(_event);
-		this.emit(24,_event);
-	}
-	,_gamepaddown: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ongamepaddown(_event);
-		this.emit(25,_event);
-	}
-	,_gamepadup: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ongamepadup(_event);
-		this.emit(26,_event);
-	}
-	,_gamepaddevice: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.ongamepaddevice(_event);
-		this.emit(27,_event);
-	}
-	,_windowmoved: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onwindowmoved(_event);
-		this.emit(29,_event);
-	}
-	,_windowresized: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onwindowresized(_event);
-		this.emit(30,_event);
-	}
-	,_windowsized: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onwindowsized(_event);
-		this.emit(31,_event);
-	}
-	,_windowminimized: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onwindowminimized(_event);
-		this.emit(32,_event);
-	}
-	,_windowrestored: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.onwindowrestored(_event);
-		this.emit(33,_event);
-	}
-	,_inputdown: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.oninputdown(_event.name,_event.event);
-		this.emit(15,_event);
-	}
-	,_inputup: function(_event) {
-		if(!this.get_active() || !this.inited || !this.started) return;
-		this.oninputup(_event.name,_event.event);
-		this.emit(16,_event);
-	}
-	,get_fixed_rate: function() {
-		return this.fixed_rate;
-	}
-	,set_fixed_rate: function(_rate) {
-		this.fixed_rate = _rate;
-		if(this.started) {
-			if(this.fixed_rate_timer != null) {
-				this.fixed_rate_timer.stop();
-				this.fixed_rate_timer = null;
-			}
-			if(_rate != 0 && this.get_parent() == null && !this.destroyed) {
-				this.fixed_rate_timer = new snow_api_Timer(_rate);
-				this.fixed_rate_timer.run = $bind(this,this._fixed_update);
-			}
-		}
-		return this.fixed_rate;
-	}
-	,_stop_fixed_rate_timer: function() {
-		if(this.fixed_rate_timer != null) {
-			this.fixed_rate_timer.stop();
-			this.fixed_rate_timer = null;
-		}
-	}
-	,_set_fixed_rate_timer: function(_rate) {
-		if(this.fixed_rate_timer != null) {
-			this.fixed_rate_timer.stop();
-			this.fixed_rate_timer = null;
-		}
-		if(_rate != 0 && this.get_parent() == null && !this.destroyed) {
-			this.fixed_rate_timer = new snow_api_Timer(_rate);
-			this.fixed_rate_timer.run = $bind(this,this._fixed_update);
-		}
-	}
-	,get_components: function() {
-		return this._components.components;
-	}
-	,_add_child: function(child) {
-		this.children.push(child);
-		if(child.get_scene() != null) {
-			var removed = child.get_scene().remove(child);
-		} else null;
-	}
-	,_remove_child: function(child) {
-		HxOverrides.remove(this.children,child);
-	}
-	,set_pos_from_transform: function(_pos) {
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.entity_pos_change(_pos);
-			}
-		}
-	}
-	,set_rotation_from_transform: function(_rotation) {
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.entity_rotation_change(_rotation);
-			}
-		}
-	}
-	,set_scale_from_transform: function(_scale) {
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.entity_scale_change(_scale);
-			}
-		}
-	}
-	,set_origin_from_transform: function(_origin) {
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.entity_origin_change(_origin);
-			}
-		}
-	}
-	,set_parent_from_transform: function(_parent) {
-		if(this.component_count > 0) {
-			var _g_index = 0;
-			var _g_map = this._components.components;
-			while(_g_index < _g_map._keys.length) {
-				var _component = _g_map.get(_g_map._keys[_g_index++]);
-				_component.entity_parent_change(_parent);
-			}
-		}
-	}
-	,set_pos: function(_p) {
-		return this.get_transform().set_pos(_p);
-	}
-	,get_pos: function() {
-		return this.get_transform().get_pos();
-	}
-	,set_rotation: function(_r) {
-		return this.get_transform().set_rotation(_r);
-	}
-	,get_rotation: function() {
-		return this.get_transform().get_rotation();
-	}
-	,set_scale: function(_s) {
-		return this.get_transform().set_scale(_s);
-	}
-	,get_scale: function() {
-		return this.get_transform().get_scale();
-	}
-	,set_origin: function(_origin) {
-		return this.get_transform().set_origin(_origin);
-	}
-	,get_origin: function() {
-		return this.get_transform().get_origin();
-	}
-	,set_transform: function(_transform) {
-		return this.transform = _transform;
-	}
-	,get_transform: function() {
-		return this.transform;
-	}
-	,set_parent: function(other) {
-		if(!(other != this)) throw new js__$Boot_HaxeError(luxe_DebugError.assertion("other != this" + (" ( " + "Entity setting itself as parent makes no sense" + " )")));
-		if(this.get_parent() != null) this.get_parent()._remove_child(this);
-		this.parent = other;
-		if(this.get_parent() != null) {
-			this.get_parent()._add_child(this);
-			this.get_transform().set_parent(this.get_parent().get_transform());
-		} else this.get_transform().set_parent(null);
-		return this.get_parent();
-	}
-	,get_parent: function() {
-		return this.parent;
-	}
-	,set_scene: function(_scene) {
-		this._detach_scene();
-		this.scene = _scene;
-		this._attach_scene();
-		return this.get_scene();
-	}
-	,get_scene: function() {
-		return this.scene;
-	}
-	,set_name: function(_name) {
-		var _scene = this.get_scene();
-		if(_scene != null && this.get_name() != null) {
-			var key = this.get_name();
-			_scene.entities.remove(key);
-			if(_scene.entities.exists(_name)) haxe_Log.trace("    i / scene / " + ("" + _scene.get_name() + " / adding a second entity named " + _name + "!\n                This will replace the existing one, possibly leaving the previous one in limbo."),{ fileName : "Scene.hx", lineNumber : 93, className : "luxe.Scene", methodName : "handle_duplicate_warning"});
-			_scene.entities.set(_name,this);
-			_scene._has_changed = true;
-		}
-		return this.name = _name;
-	}
-	,set_active: function(_active) {
-		return this.active = _active;
-	}
-	,get_active: function() {
-		return this.active;
-	}
-	,__class__: luxe_Entity
-	,__properties__: $extend(luxe_Objects.prototype.__properties__,{set_origin:"set_origin",get_origin:"get_origin",set_scale:"set_scale",get_scale:"get_scale",set_rotation:"set_rotation",get_rotation:"get_rotation",set_pos:"set_pos",get_pos:"get_pos",set_transform:"set_transform",get_transform:"get_transform",set_active:"set_active",get_active:"get_active",set_scene:"set_scene",get_scene:"get_scene",set_parent:"set_parent",get_parent:"get_parent",set_fixed_rate:"set_fixed_rate",get_fixed_rate:"get_fixed_rate",get_components:"get_components"})
-});
 var luxe_Camera = function(options) {
 	this._connected = false;
 	this.minimum_shake = 0.1;
@@ -5203,6 +5414,115 @@ luxe_Log._get_spacing = function(_file) {
 var luxe_DebugError = $hxClasses["luxe.DebugError"] = { __ename__ : ["luxe","DebugError"], __constructs__ : ["assertion","null_assertion"] };
 luxe_DebugError.assertion = function(expr) { var $x = ["assertion",0,expr]; $x.__enum__ = luxe_DebugError; $x.toString = $estr; return $x; };
 luxe_DebugError.null_assertion = function(expr) { var $x = ["null_assertion",1,expr]; $x.__enum__ = luxe_DebugError; $x.toString = $estr; return $x; };
+var luxe_Mesh = function(_options) {
+	if(_options == null) throw new js__$Boot_HaxeError(luxe_DebugError.null_assertion("_options was null" + (" ( " + "Mesh requires non-null options" + " )")));
+	this.options = _options;
+	this.transform = new phoenix_Transform();
+	this.transform.listen_pos($bind(this,this.set_pos_from_transform));
+	this.transform.listen_rotation($bind(this,this.set_rotation_from_transform));
+	this.transform.listen_scale($bind(this,this.set_scale_from_transform));
+	if(this.options.batcher == null) this.options.batcher = Luxe.renderer.batcher;
+	this.options.batcher;
+	if(this.options.file != null) {
+		var ext = haxe_io_Path.extension(this.options.file);
+		switch(ext) {
+		case "obj":
+			this.from_obj_file(this.options.file,this.options.texture,null,this.options.batcher);
+			break;
+		default:
+			throw new js__$Boot_HaxeError("Mesh cannot handle files with extension " + ext);
+		}
+	} else if(this.options.string != null) this.from_string(this.options.string,this.options.texture,null,this.options.batcher); else if(this.options.geometry != null) {
+		this.geometry = this.options.geometry;
+		if(this.options.texture != null) this.geometry.set_texture(this.options.texture);
+	}
+	this.set_pos((function($this) {
+		var $r;
+		if($this.options.pos == null) $this.options.pos = new phoenix_Vector();
+		$r = $this.options.pos;
+		return $r;
+	}(this)));
+	this.set_scale((function($this) {
+		var $r;
+		if($this.options.scale == null) $this.options.scale = new phoenix_Vector(1,1,1);
+		$r = $this.options.scale;
+		return $r;
+	}(this)));
+	this.set_rotation((function($this) {
+		var $r;
+		if($this.options.rotation == null) $this.options.rotation = new phoenix_Quaternion();
+		$r = $this.options.rotation;
+		return $r;
+	}(this)));
+};
+$hxClasses["luxe.Mesh"] = luxe_Mesh;
+luxe_Mesh.__name__ = ["luxe","Mesh"];
+luxe_Mesh.prototype = {
+	set_pos: function(_pos) {
+		return this.transform.local.set_pos(_pos);
+	}
+	,get_pos: function() {
+		return this.transform.local.pos;
+	}
+	,get_rotation: function() {
+		return this.transform.local.rotation;
+	}
+	,get_scale: function() {
+		return this.transform.local.scale;
+	}
+	,set_pos_from_transform: function(_pos) {
+		if(this.geometry != null) this.geometry.transform.local.set_pos(_pos);
+	}
+	,set_rotation: function(_rotation) {
+		return this.transform.local.set_rotation(_rotation);
+	}
+	,set_rotation_from_transform: function(_rotation) {
+		if(this.geometry != null) this.geometry.transform.local.set_rotation(_rotation);
+	}
+	,set_scale: function(_scale) {
+		return this.transform.local.set_scale(_scale);
+	}
+	,set_scale_from_transform: function(_scale) {
+		if(this.geometry != null) this.geometry.transform.local.set_scale(_scale);
+	}
+	,_obj_add_vert: function(v,_scale) {
+		var normal = new phoenix_Vector();
+		if(v.normal != null) normal.set_xyz(v.normal.x,v.normal.y,v.normal.z);
+		var _v = new phoenix_geometry_Vertex(new phoenix_Vector(v.pos.x * _scale.x,v.pos.y * _scale.y,v.pos.z * _scale.z),new phoenix_Color(),normal);
+		if(v.uv != null) _v.uv.uv0.set_uv(v.uv.u,1.0 - v.uv.v);
+		this.geometry.add(_v);
+	}
+	,from_string: function(string_data,texture,_scale,_batcher) {
+		if(_scale == null) _scale = new phoenix_Vector(1,1,1);
+		_scale;
+		var file_input = new haxe_io_StringInput(string_data);
+		var obj_mesh_data = new luxe_importers_obj_Reader(file_input).read();
+		this.geometry = new phoenix_geometry_Geometry({ texture : texture, primitive_type : 4, immediate : false, batcher : _batcher, depth : this.options.depth, no_batcher_add : this.options.no_batcher_add, buffer_based : this.options.buffer_based, object_space : this.options.object_space});
+		var _g = 0;
+		var _g1 = obj_mesh_data.vertices;
+		while(_g < _g1.length) {
+			var v = _g1[_g];
+			++_g;
+			this._obj_add_vert(v,_scale);
+		}
+	}
+	,from_obj_file: function(asset_id,texture,_scale,_batcher) {
+		if(_scale == null) _scale = new phoenix_Vector(1,1,1);
+		_scale;
+		var res = Luxe.resources.cache.get(asset_id);
+		if(res == null) throw new js__$Boot_HaxeError(luxe_DebugError.null_assertion("res was null" + (" ( " + ("Mesh cannot find text resource named " + asset_id + ", is it loaded?") + " )")));
+		this.from_string(res.asset.text,texture,_scale,_batcher);
+		this.geometry.id = asset_id;
+	}
+	,destroy: function() {
+		if(this.geometry != null) {
+			this.geometry.drop();
+			this.geometry = null;
+		}
+	}
+	,__class__: luxe_Mesh
+	,__properties__: {set_rotation:"set_rotation",get_rotation:"get_rotation",set_scale:"set_scale",get_scale:"get_scale",set_pos:"set_pos",get_pos:"get_pos"}
+};
 var luxe_Visual = function(_options) {
 	this.ignore_texture_on_geometry_change = false;
 	this._creating_geometry = false;
@@ -7323,6 +7643,42 @@ luxe_components_Components.prototype = {
 	}
 	,__class__: luxe_components_Components
 };
+var luxe_components_render_MeshComponent = function(_options) {
+	this.options = _options;
+	if(this.options == null) throw new js__$Boot_HaxeError(luxe_DebugError.null_assertion("options was null" + (" ( " + "MeshComponent requires non-null options" + " )")));
+	if(this.options.name == null) this.options.name = "mesh";
+	this.options.name;
+	luxe_Component.call(this,{ name : this.options.name});
+};
+$hxClasses["luxe.components.render.MeshComponent"] = luxe_components_render_MeshComponent;
+luxe_components_render_MeshComponent.__name__ = ["luxe","components","render","MeshComponent"];
+luxe_components_render_MeshComponent.__super__ = luxe_Component;
+luxe_components_render_MeshComponent.prototype = $extend(luxe_Component.prototype,{
+	init: function() {
+		if(this.mesh == null) {
+			this.mesh = new luxe_Mesh(this.options);
+			this.mesh.set_pos(this.get_entity().get_pos());
+			this.mesh.set_rotation(this.get_entity().get_rotation());
+			this.mesh.set_scale(this.get_entity().get_scale());
+		}
+	}
+	,entity_pos_change: function(_pos) {
+		if(this.mesh != null) this.mesh.set_pos(_pos);
+	}
+	,entity_rotation_change: function(_rotation) {
+		if(this.mesh != null) this.mesh.set_rotation(_rotation);
+	}
+	,entity_scale_change: function(_scale) {
+		if(this.mesh != null) this.mesh.set_scale(_scale);
+	}
+	,ondestroy: function() {
+		if(this.mesh != null) this.mesh.destroy();
+	}
+	,onremoved: function() {
+		luxe_Component.prototype.onremoved.call(this);
+	}
+	,__class__: luxe_components_render_MeshComponent
+});
 var luxe_debug_DebugView = function() {
 	this.visible = false;
 	luxe_Objects.call(this);
@@ -8689,6 +9045,129 @@ luxe_importers_bitmapfont_BitmapFontParser.trim = function(_s) {
 luxe_importers_bitmapfont_BitmapFontParser.unquote = function(_s) {
 	if(_s.indexOf("\"") != -1) _s = StringTools.replace(_s,"\"","");
 	return _s;
+};
+var luxe_importers_obj_Reader = function(input) {
+	this.i = input;
+	this.i.set_bigEndian(true);
+};
+$hxClasses["luxe.importers.obj.Reader"] = luxe_importers_obj_Reader;
+luxe_importers_obj_Reader.__name__ = ["luxe","importers","obj","Reader"];
+luxe_importers_obj_Reader.prototype = {
+	read: function() {
+		var file_string = this.i.readAll().toString();
+		var lines = file_string.split("\n");
+		var data = this.parse(lines);
+		return data;
+	}
+	,parse: function(lines) {
+		var data = { vertices : []};
+		this.vertexIndices = [];
+		this.normalIndices = [];
+		this.uvIndices = [];
+		var temp_verts = [];
+		var temp_uvs = [];
+		var temp_normals = [];
+		var _g = 0;
+		while(_g < lines.length) {
+			var line = lines[_g];
+			++_g;
+			line = StringTools.trim(line);
+			var type = line.split(" ")[0];
+			switch(type) {
+			case "v":
+				temp_verts.push(this.parse_vert(line));
+				break;
+			case "vt":
+				temp_uvs.push(this.parse_uv(line));
+				break;
+			case "vn":
+				temp_normals.push(this.parse_normal(line));
+				break;
+			case "f":
+				this.parse_face(line);
+				break;
+			case "s":
+				break;
+			}
+		}
+		var _g1 = 0;
+		var _g2 = this.vertexIndices.length;
+		while(_g1 < _g2) {
+			var i = _g1++;
+			var vertexIndex = this.vertexIndices[i];
+			var uvIndex = this.uvIndices[i];
+			var normalIndex = this.normalIndices[i];
+			var pos = temp_verts[vertexIndex - 1];
+			var uv;
+			if(uvIndex != -1) uv = temp_uvs[uvIndex - 1]; else uv = { u : 0.0, v : 0.0};
+			var normal;
+			if(normalIndex != -1) normal = temp_normals[normalIndex - 1]; else normal = { x : 0.0, y : 0.0, z : 0.0, w : 0.0};
+			data.vertices.push({ pos : pos, uv : uv, normal : normal});
+		}
+		return data;
+	}
+	,parse_vert: function(line) {
+		var items = line.split(" ");
+		var _g = 0;
+		while(_g < items.length) {
+			var element = items[_g];
+			++_g;
+			if(element.length == 0) HxOverrides.remove(items,element);
+		}
+		var v = { x : parseFloat(items[1]), y : parseFloat(items[2]), z : parseFloat(items[3]), w : items.length > 4?parseFloat(items[4]):1.0};
+		return v;
+	}
+	,parse_uv: function(line) {
+		var items = line.split(" ");
+		var _g = 0;
+		while(_g < items.length) {
+			var element = items[_g];
+			++_g;
+			if(element.length == 0) HxOverrides.remove(items,element);
+		}
+		var uv = { u : parseFloat(items[1]), v : parseFloat(items[2])};
+		return uv;
+	}
+	,parse_normal: function(line) {
+		var items = line.split(" ");
+		var _g = 0;
+		while(_g < items.length) {
+			var element = items[_g];
+			++_g;
+			if(element.length == 0) HxOverrides.remove(items,element);
+		}
+		var n = { x : parseFloat(items[1]), y : parseFloat(items[2]), z : parseFloat(items[3]), w : items.length > 4?parseFloat(items[4]):1.0};
+		return n;
+	}
+	,parse_face: function(line) {
+		line = StringTools.trim(line);
+		var items = line.split(" ");
+		var _g = 0;
+		while(_g < items.length) {
+			var element = items[_g];
+			++_g;
+			if(element.length == 0) HxOverrides.remove(items,element);
+		}
+		items.shift();
+		if(items.length > 3) throw new js__$Boot_HaxeError("Can't parse faces that aren't triangulated from here (yet).");
+		var _g1 = 0;
+		while(_g1 < items.length) {
+			var item = items[_g1];
+			++_g1;
+			if(item.indexOf("//") == -1) {
+				var indices = item.split("/");
+				this.vertexIndices.push(Std.parseInt(indices[0]));
+				this.uvIndices.push(Std.parseInt(indices[1]));
+				if(indices.length > 2) this.normalIndices.push(Std.parseInt(indices[2])); else this.normalIndices.push(-1);
+			} else {
+				var indices1 = item.split("/");
+				this.vertexIndices.push(Std.parseInt(indices1[0]));
+				this.uvIndices.push(-1);
+				if(indices1.length > 2) this.normalIndices.push(Std.parseInt(indices1[2])); else this.normalIndices.push(-1);
+			}
+		}
+	}
+	,__class__: luxe_importers_obj_Reader
 };
 var luxe_macros_BuildVersion = function() { };
 $hxClasses["luxe.macros.BuildVersion"] = luxe_macros_BuildVersion;
